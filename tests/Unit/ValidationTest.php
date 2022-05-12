@@ -9,6 +9,8 @@ use Illuminate\Support\ViewErrorBag;
 use Livewire\Component;
 use Livewire\Livewire;
 
+use function PHPUnit\Framework\assertTrue;
+
 class ValidationTest extends TestCase
 {
     /** @test */
@@ -429,6 +431,55 @@ class ValidationTest extends TestCase
         $component = Livewire::test(WithValidationMethod::class);
         $component->assertSet('count', 0)->call('clearWithValidatorAfterRunningValidateOnlyMethod')->assertSet('count', 1);
     }
+
+    /** @test */
+    public function a_set_of_items_will_validate_individually()
+    {
+        Livewire::test(ValidatesOnlyTestComponent::class, ['image' => 'image', 'imageAlt' => 'This is an image'])
+            ->call('runValidateOnly', 'image_alt')
+            ->assertHasNoErrors(['image_alt', 'image_url', 'image'])
+            ->call('runValidateOnly', 'image_url')
+            ->assertHasNoErrors(['image', 'image_url', 'image_alt'])
+            ->call('runValidateOnly', 'image')
+            ->assertHasNoErrors(['image', 'image_url', 'image_alt']);
+    }
+
+    /** @test */
+    public function a_computed_property_is_able_to_validate()
+    {
+        Livewire::test(ValidatesComputedProperty::class, ['helper' => 10])
+            ->call('runValidation')
+            ->assertHasNoErrors(['computed'])
+            ->set('helper', -1)
+            ->call('runValidation')
+            ->assertHasErrors(['computed']);
+
+        $this->expectExceptionMessage('No property found for validation: [missing]');
+        Livewire::test(ForValidation::class)
+                ->call('runValidationOnlyWithMissingProperty', 'missing');
+
+        $this->expectExceptionMessage('No property found for validation: [fail]');
+        Livewire::test(ValidatesComputedProperty::class)
+            ->call('runValidationRuleWithoutProperty');
+    }
+
+    /** @test */
+    public function when_unwrapping_data_for_validation_an_object_is_checked_if_it_is_wireable_first()
+    {
+        if (version_compare(PHP_VERSION, '7.4', '<')) {
+            $this->markTestSkipped('Typed Property Initialization not supported prior to PHP 7.4');
+        }
+
+        require_once __DIR__.'/WireablesCanBeSetAsPublicPropertiesStubs.php';
+
+        Livewire::test(ValidatesWireableProperty::class)
+            ->call('runValidation')
+            ->assertHasErrors('customCollection.0.amount')
+            ->set('customCollection.0.amount', 150)
+            ->call('runValidation')
+            ->assertHasNoErrors('customCollection.0.amount')
+            ;
+    }
 }
 
 class ForValidation extends Component
@@ -470,6 +521,13 @@ class ForValidation extends Component
         $this->validateOnly($field, [
             'foo' => 'required',
             'bar' => 'required',
+        ]);
+    }
+
+    public function runValidationOnlyWithMissingProperty($field)
+    {
+        $this->validateOnly($field, [
+            'missing' => 'required',
         ]);
     }
 
@@ -718,5 +776,93 @@ class WithValidationMethod extends Component
     public function render()
     {
         return app('view')->make('dump-errors');
+    }
+}
+
+class ValidatesOnlyTestComponent extends Component
+{
+    public $image = '';
+    public $image_alt = '';
+    public $image_url = '';
+
+    public $rules = [
+        'image' => 'required_without:image_url|string',
+        'image_alt' => 'required|string',
+        'image_url' => 'required_without:image|string'
+    ];
+
+    public function mount($image, $imageAlt, $imageUrl = '')
+    {
+        $this->image = $image;
+        $this->image_alt = $imageAlt;
+        $this->image_url = $imageUrl;
+    }
+
+    public function runValidation()
+    {
+        $this->validate();
+    }
+
+    public function runValidateOnly($propertyName)
+    {
+        $this->validateOnly($propertyName);
+    }
+
+    public function runResetValidation()
+    {
+        $this->resetValidation();
+    }
+
+    public function render()
+    {
+        return view('null-view');
+    }
+}
+
+class ValidatesComputedProperty extends Component
+{
+    public $helper;
+
+    public $rules = [
+        'computed' => 'required|gte:0'
+    ];
+
+    public function prepareForValidation($attributes) {
+        $attributes['computed'] = $this->getComputedProperty();
+        return $attributes;
+    }
+
+    public function getComputedProperty() {
+        return $this->helper;
+    }
+
+    public function getFailProperty() {
+        return 'I will fail';
+    }
+
+    public function mount($helper = null)
+    {
+        $this->helper = $helper;
+    }
+
+    public function runValidationRuleWithoutProperty()
+    {
+        $this->rules['fail'] = 'require|min:1';
+        $this->validate();
+    }
+
+    public function runValidation()
+    {
+        $this->validate();
+    }
+
+    public function runResetValidation()
+    {
+        $this->resetValidation();
+    }
+
+    public function render()
+    {
+        return view('null-view');
     }
 }
